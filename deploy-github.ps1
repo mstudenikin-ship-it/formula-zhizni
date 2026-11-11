@@ -32,11 +32,27 @@ function Write-Step($text) { Write-Host "==> $text" -ForegroundColor Cyan }
 function Write-Ok($text)   { Write-Host "    $text" -ForegroundColor Green }
 function Write-Note($text) { Write-Host "    $text" -ForegroundColor Yellow }
 
+# Вызов git без падения на stderr (git пишет туда и обычные сообщения)
+function Invoke-Git {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $out = & git @Args 2>&1
+        $code = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $prev
+    }
+    return [pscustomobject]@{ Output = $out; Code = $code }
+}
+
 # --- 1. git на месте? ---
 Write-Step "Проверяю git"
-$git = Get-Command git -ErrorAction SilentlyContinue
-if (-not $git) { throw "git не найден в PATH. Установите Git for Windows." }
-Write-Ok (& git --version)
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    throw "git не найден в PATH. Установите Git for Windows."
+}
+Write-Ok ((Invoke-Git --version).Output -join " ")
 
 # --- 2. мы в репозитории? ---
 Write-Step "Проверяю репозиторий"
@@ -46,36 +62,41 @@ if (-not (Test-Path (Join-Path $PSScriptRoot ".git"))) {
 
 Push-Location $PSScriptRoot
 try {
-    $current = (& git branch --show-current).Trim()
+    $cur = Invoke-Git branch --show-current
+    $current = ($cur.Output -join "").Trim()
     if ($current -ne $Branch) {
         Write-Note "Текущая ветка '$current', переключаю на '$Branch'"
-        & git branch -M $Branch
+        [void](Invoke-Git branch -M $Branch)
     }
     Write-Ok "Ветка: $Branch"
 
-    $dirty = (& git status --porcelain)
-    if ($dirty) {
+    $st = Invoke-Git status --porcelain
+    $dirty = @($st.Output | Where-Object { $_ -and $_.Trim() -ne "" })
+    if ($dirty.Count -gt 0) {
         Write-Note "Есть незакоммиченные изменения:"
         $dirty | ForEach-Object { Write-Note "  $_" }
         $answer = Read-Host "Закоммитить их перед отправкой? (y/n)"
         if ($answer -eq "y") {
-            & git add -A
-            & git commit -m "Обновление сайта"
+            [void](Invoke-Git add -A)
+            $c = Invoke-Git commit -m "Обновление сайта"
+            if ($c.Code -ne 0) { throw "Не удалось закоммитить изменения." }
             Write-Ok "Изменения закоммичены"
         }
-    } else {
+    }
+    else {
         Write-Ok "Рабочее дерево чистое"
     }
 
     # --- 3. remote ---
     Write-Step "Настраиваю remote"
     $url = "https://github.com/$User/$Repo.git"
-    & git remote get-url origin 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-        & git remote set-url origin $url
+    $hasOrigin = (Invoke-Git remote).Output -contains "origin"
+    if ($hasOrigin) {
+        [void](Invoke-Git remote set-url origin $url)
         Write-Ok "origin обновлён -> $url"
-    } else {
-        & git remote add origin $url
+    }
+    else {
+        [void](Invoke-Git remote add origin $url)
         Write-Ok "origin добавлен -> $url"
     }
 
@@ -84,8 +105,10 @@ try {
     Write-Note "Если попросит пароль — вводите Personal Access Token, не пароль аккаунта."
     Write-Note "Создать токен: https://github.com/settings/tokens (права: repo)"
     Write-Host ""
-    & git push -u origin $Branch
-    if ($LASTEXITCODE -ne 0) {
+
+    $push = Invoke-Git push -u origin $Branch
+    $push.Output | ForEach-Object { Write-Host "    $_" }
+    if ($push.Code -ne 0) {
         throw "git push завершился с ошибкой. Проверьте логин, имя репозитория и токен."
     }
     Write-Ok "Код отправлен"
