@@ -921,7 +921,12 @@
         <div class="lead-form">
           <h3>Оставьте заявку</h3>
           <p class="form-sub">Перезвоним и согласуем удобное время визита.</p>
-          <form id="leadForm" novalidate>
+          <form id="leadForm" action="https://formsubmit.co/doktorovaula750@gmail.com" method="POST" novalidate>
+            <input type="hidden" name="_subject" value="Заявка с сайта «Формула Жизни»">
+            <input type="hidden" name="_template" value="table">
+            <input type="hidden" name="_captcha" value="false">
+            <input type="hidden" name="_next" value="https://mstudenikin-ship-it.github.io/formula-zhizni/?sent=1#lead">
+            <input type="text" name="_honey" style="display:none" tabindex="-1" autocomplete="off" aria-hidden="true">
             <div class="field">
               <label for="name">Как к вам обращаться <span class="req" aria-hidden="true">*</span></label>
               <input type="text" id="name" name="name" autocomplete="name" placeholder="Имя" required>
@@ -1100,13 +1105,36 @@
     items.forEach(function (el) { el.classList.add("in"); });
   }
 
+  /* сообщение после возврата с формы без JS */
+  if (window.location.search.indexOf("sent=1") !== -1 && status) {
+    status.className = "form-status ok";
+    status.textContent = "Заявка отправлена. Перезвоним в ближайшее время.";
+  }
+
   /* year */
   var y = document.getElementById("year");
   if (y) y.textContent = String(new Date().getFullYear());
 
-  /* form: client-side only demo submit */
+  /* form: отправка заявки на почту через FormSubmit */
   var form = document.getElementById("leadForm");
   var status = document.getElementById("formStatus");
+  var submitBtn = form ? form.querySelector('button[type="submit"]') : null;
+  var AJAX_URL = "https://formsubmit.co/ajax/doktorovaula750@gmail.com";
+  var BTN_TEXT = submitBtn ? submitBtn.innerHTML : "";
+
+  function showStatus(kind, text) {
+    status.className = "form-status " + kind;
+    status.textContent = text;
+  }
+
+  function setBusy(busy) {
+    if (!submitBtn) return;
+    submitBtn.disabled = busy;
+    submitBtn.style.opacity = busy ? ".7" : "";
+    submitBtn.style.cursor = busy ? "progress" : "";
+    submitBtn.innerHTML = busy ? "Отправляем…" : BTN_TEXT;
+  }
+
   if (form) {
     form.addEventListener("submit", function (e) {
       e.preventDefault();
@@ -1118,28 +1146,49 @@
       var consent = form.elements.consent.checked;
 
       if (name.length < 2) {
-        status.className = "form-status err";
-        status.textContent = "Укажите, как к вам обращаться.";
+        showStatus("err", "Укажите, как к вам обращаться.");
         form.elements.name.focus();
         return;
       }
       var digits = phone.replace(/\D/g, "");
       if (digits.length < 10) {
-        status.className = "form-status err";
-        status.textContent = "Проверьте номер телефона: нужно не меньше 10 цифр.";
+        showStatus("err", "Проверьте номер телефона: нужно не меньше 10 цифр.");
         form.elements.phone.focus();
         return;
       }
       if (!consent) {
-        status.className = "form-status err";
-        status.textContent = "Нужно согласие на обработку персональных данных.";
+        showStatus("err", "Нужно согласие на обработку персональных данных.");
         form.elements.consent.focus();
         return;
       }
 
-      status.className = "form-status ok";
-      status.textContent = "Заявка принята. Перезвоним в ближайшее время — телефон " + phone + ".";
-      form.reset();
+      setBusy(true);
+
+      fetch(AJAX_URL, {
+        method: "POST",
+        headers: { "Accept": "application/json" },
+        body: new FormData(form)
+      })
+        .then(function (res) {
+          return res.json().catch(function () { return {}; }).then(function (data) {
+            return { ok: res.ok, data: data };
+          });
+        })
+        .then(function (r) {
+          if (r.ok) {
+            showStatus("ok", "Заявка отправлена. Перезвоним в ближайшее время — телефон " + phone + ".");
+            form.reset();
+          } else {
+            var msg = (r.data && r.data.message) ? r.data.message : "";
+            showStatus("err", "Не удалось отправить заявку. Позвоните нам: +7 (908) 182-99-00." + (msg ? " (" + msg + ")" : ""));
+          }
+        })
+        .catch(function () {
+          showStatus("err", "Нет связи с сервером. Позвоните нам: +7 (908) 182-99-00.");
+        })
+        .then(function () {
+          setBusy(false);
+        });
     });
   }
 })();
